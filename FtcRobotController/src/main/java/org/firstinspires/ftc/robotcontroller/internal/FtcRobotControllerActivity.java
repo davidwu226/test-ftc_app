@@ -50,6 +50,7 @@ import android.preference.PreferenceManager;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.annotation.StringRes;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
@@ -92,6 +93,7 @@ import com.qualcomm.robotcore.util.Device;
 import com.qualcomm.robotcore.util.Dimmer;
 import com.qualcomm.robotcore.util.ImmersiveMode;
 import com.qualcomm.robotcore.util.RobotLog;
+import com.qualcomm.robotcore.util.ThreadPool;
 import com.qualcomm.robotcore.wifi.NetworkConnection;
 import com.qualcomm.robotcore.wifi.NetworkConnectionFactory;
 import com.qualcomm.robotcore.wifi.NetworkType;
@@ -99,7 +101,17 @@ import com.qualcomm.robotcore.wifi.NetworkType;
 import org.firstinspires.ftc.ftccommon.external.SoundPlayingRobotMonitor;
 import org.firstinspires.ftc.ftccommon.internal.FtcRobotControllerWatchdogService;
 import org.firstinspires.ftc.ftccommon.internal.ProgramAndManageActivity;
+import org.firstinspires.ftc.robotcore.external.ClassFactory;
+import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
+import org.firstinspires.ftc.robotcore.external.hardware.camera.CameraManager;
+import org.firstinspires.ftc.robotcore.external.matrices.OpenGLMatrix;
 import org.firstinspires.ftc.robotcore.external.navigation.MotionDetection;
+import org.firstinspires.ftc.robotcore.external.navigation.Orientation;
+import org.firstinspires.ftc.robotcore.external.navigation.VuforiaBase;
+import org.firstinspires.ftc.robotcore.external.navigation.VuforiaLocalizer;
+import org.firstinspires.ftc.robotcore.external.navigation.VuforiaTrackable;
+import org.firstinspires.ftc.robotcore.external.navigation.VuforiaTrackableDefaultListener;
+import org.firstinspires.ftc.robotcore.external.navigation.VuforiaTrackables;
 import org.firstinspires.ftc.robotcore.internal.hardware.DragonboardLynxDragonboardIsPresentPin;
 import org.firstinspires.ftc.robotcore.internal.network.DeviceNameManager;
 import org.firstinspires.ftc.robotcore.internal.network.DeviceNameManagerFactory;
@@ -119,8 +131,18 @@ import org.firstinspires.ftc.robotcore.internal.webserver.RobotControllerWebInfo
 import org.firstinspires.ftc.robotcore.internal.webserver.WebServer;
 import org.firstinspires.inspection.RcInspectionActivity;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+
+import static org.firstinspires.ftc.robotcore.external.navigation.AngleUnit.DEGREES;
+import static org.firstinspires.ftc.robotcore.external.navigation.AxesOrder.XYZ;
+import static org.firstinspires.ftc.robotcore.external.navigation.AxesOrder.YZX;
+import static org.firstinspires.ftc.robotcore.external.navigation.AxesReference.EXTRINSIC;
+import static org.firstinspires.ftc.robotcore.external.navigation.VuforiaLocalizer.CameraDirection.BACK;
+import static org.firstinspires.ftc.robotcore.external.navigation.VuforiaLocalizer.CameraDirection.FRONT;
 
 @SuppressWarnings("WeakerAccess")
 public class FtcRobotControllerActivity extends Activity
@@ -352,7 +374,18 @@ public class FtcRobotControllerActivity extends Activity
     return result;
   }
 
-  @Override
+    // Select which camera you want use.  The FRONT camera is the one on the same side as the screen.
+    // Valid choices are:  BACK or FRONT
+    private static final VuforiaLocalizer.CameraDirection CAMERA_CHOICE = BACK;
+  VuforiaLocalizer vuforia;
+    private static final float mmPerInch        = 25.4f;
+    private static final float mmFTCFieldWidth  = (12*6) * mmPerInch;       // the width of the FTC field (from the center point to the outer panels)
+    private static final float mmTargetHeight   = (6) * mmPerInch;          // the height of the center of the target image above the floor
+
+
+    private Thread thread = null;
+
+    @Override
   protected void onStart() {
     super.onStart();
     RobotLog.vv(TAG, "onStart()");
@@ -368,6 +401,147 @@ public class FtcRobotControllerActivity extends Activity
     entireScreenLayout.setOnTouchListener(new View.OnTouchListener() {
       @Override
       public boolean onTouch(View v, MotionEvent event) {
+        {
+          Log.d(TAG, "HERE!!!!!!!!");
+          if (thread != null) {
+            thread.interrupt();
+            thread = null;
+          }
+
+          if (thread == null) {
+            Log.d(TAG, "CREATE HERE!!!!!!!!");
+
+            thread = new Thread(new Runnable() {
+              @Override
+              public void run() {
+                Log.d(TAG, "STARTED!!!!!!!!!!");
+
+                int cameraMonitorViewId = context.getResources().getIdentifier("cameraMonitorViewId", "id", context.getPackageName());
+                VuforiaLocalizer.Parameters parameters = new VuforiaLocalizer.Parameters(cameraMonitorViewId);
+                parameters.vuforiaLicenseKey = "AaNzdGn/////AAAAGVCiwQaxg01ft7Lw8kYMP3aE00RU5hyTkE1CNeaYi16CBF0EC/LWi50VYsSMdJITYz6jBTmG6UGJNaNXhzk1zVIggfVmGyEZFL5doU6eVaLdgLyVmJx6jLgNzSafXSLnisXnlS+YJlCaOh1pwk08tWM8Oz+Au7drZ4BkO8j1uluIkwiewRu5zDZGlbNliFfYeCRqslBEZCGxiuH/idcsD7Q055Bwj+f++zuG3x4YlIGJCHrTpVjJUWEIbdJzJVgukc/vVOz21UNpY6WoAwH5MSeh4/U6lYwMZTQb4icfk0o1EiBdOPJKHsxyVF9l00r+6Mmdf6NJcFTFLoucvPjngWisD2T/sjbtq9N+hHnKRpbK\n";
+                parameters.cameraDirection   = CAMERA_CHOICE;
+
+                List<WebcamName> names = ClassFactory.getInstance().getCameraManager().getAllWebcams();
+                WebcamName w = null;
+                for (WebcamName name : names) {
+                  Log.d(TAG, "WebNames: "+name.getDeviceName());
+                  parameters.cameraName = name;
+                }
+
+                vuforia = ClassFactory.getInstance().createVuforia(parameters);
+
+                VuforiaTrackables targetsRoverRuckus = vuforia.loadTrackablesFromAsset("RoverRuckus");
+                VuforiaTrackable blueRover = targetsRoverRuckus.get(0);
+                blueRover.setName("Blue-Rover");
+                VuforiaTrackable redFootprint = targetsRoverRuckus.get(1);
+                redFootprint.setName("Red-Footprint");
+                VuforiaTrackable frontCraters = targetsRoverRuckus.get(2);
+                frontCraters.setName("Front-Craters");
+                VuforiaTrackable backSpace = targetsRoverRuckus.get(3);
+                backSpace.setName("Back-Space");
+
+                List<VuforiaTrackable> allTrackables = new ArrayList<VuforiaTrackable>();
+                allTrackables.addAll(targetsRoverRuckus);
+
+                /**
+                 * In order for localization to work, we need to tell the system where each target is on the field, and
+                 * where the phone resides on the robot.  These specifications are in the form of <em>transformation matrices.</em>
+                 * Transformation matrices are a central, important concept in the math here involved in localization.
+                 * See <a href="https://en.wikipedia.org/wiki/Transformation_matrix">Transformation Matrix</a>
+                 * for detailed information. Commonly, you'll encounter transformation matrices as instances
+                 * of the {@link OpenGLMatrix} class.
+                 *
+                 * If you are standing in the Red Alliance Station looking towards the center of the field,
+                 *     - The X axis runs from your left to the right. (positive from the center to the right)
+                 *     - The Y axis runs from the Red Alliance Station towards the other side of the field
+                 *       where the Blue Alliance Station is. (Positive is from the center, towards the BlueAlliance station)
+                 *     - The Z axis runs from the floor, upwards towards the ceiling.  (Positive is above the floor)
+                 *
+                 * This Rover Ruckus sample places a specific target in the middle of each perimeter wall.
+                 *
+                 * Before being transformed, each target image is conceptually located at the origin of the field's
+                 *  coordinate system (the center of the field), facing up.
+                 */
+
+                /**
+                 * To place the BlueRover target in the middle of the blue perimeter wall:
+                 * - First we rotate it 90 around the field's X axis to flip it upright.
+                 * - Then, we translate it along the Y axis to the blue perimeter wall.
+                 */
+                OpenGLMatrix blueRoverLocationOnField = OpenGLMatrix
+                        .translation(0, mmFTCFieldWidth, mmTargetHeight)
+                        .multiplied(Orientation.getRotationMatrix(EXTRINSIC, XYZ, DEGREES, 90, 0, 0));
+                blueRover.setLocation(blueRoverLocationOnField);
+
+                /**
+                 * To place the RedFootprint target in the middle of the red perimeter wall:
+                 * - First we rotate it 90 around the field's X axis to flip it upright.
+                 * - Second, we rotate it 180 around the field's Z axis so the image is flat against the red perimeter wall
+                 *   and facing inwards to the center of the field.
+                 * - Then, we translate it along the negative Y axis to the red perimeter wall.
+                 */
+                OpenGLMatrix redFootprintLocationOnField = OpenGLMatrix
+                        .translation(0, -mmFTCFieldWidth, mmTargetHeight)
+                        .multiplied(Orientation.getRotationMatrix(EXTRINSIC, XYZ, DEGREES, 90, 0, 180));
+                redFootprint.setLocation(redFootprintLocationOnField);
+
+                /**
+                 * To place the FrontCraters target in the middle of the front perimeter wall:
+                 * - First we rotate it 90 around the field's X axis to flip it upright.
+                 * - Second, we rotate it 90 around the field's Z axis so the image is flat against the front wall
+                 *   and facing inwards to the center of the field.
+                 * - Then, we translate it along the negative X axis to the front perimeter wall.
+                 */
+                OpenGLMatrix frontCratersLocationOnField = OpenGLMatrix
+                        .translation(-mmFTCFieldWidth, 0, mmTargetHeight)
+                        .multiplied(Orientation.getRotationMatrix(EXTRINSIC, XYZ, DEGREES, 90, 0 , 90));
+                frontCraters.setLocation(frontCratersLocationOnField);
+
+                /**
+                 * To place the BackSpace target in the middle of the back perimeter wall:
+                 * - First we rotate it 90 around the field's X axis to flip it upright.
+                 * - Second, we rotate it -90 around the field's Z axis so the image is flat against the back wall
+                 *   and facing inwards to the center of the field.
+                 * - Then, we translate it along the X axis to the back perimeter wall.
+                 */
+                OpenGLMatrix backSpaceLocationOnField = OpenGLMatrix
+                        .translation(mmFTCFieldWidth, 0, mmTargetHeight)
+                        .multiplied(Orientation.getRotationMatrix(EXTRINSIC, XYZ, DEGREES, 90, 0, -90));
+                backSpace.setLocation(backSpaceLocationOnField);
+
+                final int CAMERA_FORWARD_DISPLACEMENT  = 110;   // eg: Camera is 110 mm in front of robot center
+                final int CAMERA_VERTICAL_DISPLACEMENT = 200;   // eg: Camera is 200 mm above ground
+                final int CAMERA_LEFT_DISPLACEMENT     = 0;     // eg: Camera is ON the robot's center line
+
+                OpenGLMatrix phoneLocationOnRobot = OpenGLMatrix
+                        .translation(CAMERA_FORWARD_DISPLACEMENT, CAMERA_LEFT_DISPLACEMENT, CAMERA_VERTICAL_DISPLACEMENT)
+                        .multiplied(Orientation.getRotationMatrix(EXTRINSIC, YZX, DEGREES,
+                                CAMERA_CHOICE == FRONT ? 90 : -90, 0, 0));
+
+                /**  Let all the trackable listeners know where the phone is.  */
+                for (VuforiaTrackable trackable : allTrackables)
+                {
+                  ((VuforiaTrackableDefaultListener)trackable.getListener()).setPhoneInformation(phoneLocationOnRobot, parameters.cameraDirection);
+                }
+
+                targetsRoverRuckus.activate();
+
+                while (true) {
+                  try {
+                    Thread.sleep(1000);
+                  } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                  }
+                  for (VuforiaTrackable trackable : allTrackables) {
+                    boolean isVisible = ((VuforiaTrackableDefaultListener)trackable.getListener()).isVisible();
+                    Log.d(TAG, "TRACKED: "+trackable.getName()+" "+(isVisible ? "visible" : "not visible"));
+                  }
+                }
+              }
+            });
+            thread.start();
+          }
+        }
         dimmer.handleDimTimer();
         return false;
       }
